@@ -667,25 +667,7 @@ async def run_single(page: Page, name: str, address: str, idx: int) -> bool:
             logger.info('✅ Сторінка завантажена успішно!')
             break
         except Exception as e:
-            logger.warning(f'⚠️ Спроба {attempt + 1} не вдалася: {e}')
-            if attempt == max_retries - 1:
-                logger.error('❌ Не вдалося завантажити сторінку після всіх спроб')
-
-                # Спробуємо спростити завантаження
-                try:
-                    logger.info('🔄 Спробуємо завантажити без очікування load...')
-                    await page.goto('https://www.fastpeoplesearch.com/', wait_until='domcontentloaded', timeout=30000)
-                    logger.info('✅ Сторінка завантажена з domcontentloaded!')
-                    break
-                except Exception as e2:
-                    logger.error(f'❌ Критична помилка завантаження: {e2}')
-                    return False
-            else:
-                await page.wait_for_timeout(5000)  # Чекаємо перед повторною спробою
-
-
-    # Додаткова затримка для завантаження
-    await page.wait_for_timeout(60000)
+            logger.warning(f'⚠️ Сторінка не завантажилася: {e}')
     
     # Перевіряємо чи завантажилася сторінка
     try:
@@ -751,16 +733,8 @@ async def run_single(page: Page, name: str, address: str, idx: int) -> bool:
     except Exception:
         logger.info('Capha is not found')
 
-    # # Чекаємо результати пошуку
-    # try:
-    #     await page.wait_for_load_state('networkidle', timeout=15000)
-    #     logger.info('📋 Очікування завершення пошуку...')
-    # except Exception:
-    #     logger.debug('NetworkIdle timeout після пошуку')
-    #
-    # await page.wait_for_timeout(3000)
-    # await page.screenshot(path=f'patchright_gl_{idx}.png')
-    # logger.info(f'Screenshot patchright_gl_{idx}.png saved')
+    await page.locator('a').filter(has_text=address)
+
     return True
 
 # ---------- main ----------
