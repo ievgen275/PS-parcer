@@ -1,0 +1,5 @@
+2025/07/16-22:21:57.593 4f60 Creating DB C:\Users\yevgen\Documents\My-project\peopleSearch-parser\gologin_tmp\gologin_6877fbcd9ac6a05afa4c70a6\Default\Local Storage\leveldb since it was missing.
+2025/07/16-22:21:57.816 4f60 Reusing MANIFEST C:\Users\yevgen\Documents\My-project\peopleSearch-parser\gologin_tmp\gologin_6877fbcd9ac6a05afa4c70a6\Default\Local Storage\leveldb/MANIFEST-000001
+2025/07/16-22:22:56.153 6f8 Level-0 table #5: started
+2025/07/16-22:22:56.163 6f8 Level-0 table #5: 125796 bytes OK
+2025/07/16-22:22:56.171 6f8 Delete type=0 #3

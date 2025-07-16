@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 # Токен можна перезаписати змінною середовища GLOGIN_TOKEN, інакше береться цей за замовчуванням
-DEFAULT_GLOGIN_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2ODcxYTdjNjdlY2Y3NmE1ODkwZTg1ZTIiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2ODcxYTg0MWVjOTQyZWYzMTY4MTRlZjQifQ.jKv0hx7Vcd9A4-9ausX2tuQpZCcTpRx5FMGZyf95I_w"
+DEFAULT_GLOGIN_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2ODc1NTQzMzczNDMwNWE5ZjhiOTBlYWIiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2ODc1NTRhZThmYjQ5NTM5NDcxZWZjYjUifQ.eeLsXDmKheHzZmuMFohAc6mEbfSGex4tc2pUkhfjGEM"
 GLOGIN_TOKEN = os.getenv('GLOGIN_TOKEN', DEFAULT_GLOGIN_TOKEN)
 if not GLOGIN_TOKEN:
     logger.error('GLOGIN_TOKEN is empty'); exit(1)
@@ -66,27 +66,33 @@ def load_first_proxy() -> str | None:
 
 # --------- Queue builder from final_results ----------
 def build_queue() -> list[Tuple[str, str]]:
-    """Спробує клікнути чекбокс Cloudflare Turnstile і отримати токен.
+    """Формує чергу завдань із текстових файлів у директорії final_results.
 
-    Знаходить iframe Turnstile, клікає чекбокс (або подібний елемент) і перевіряє,
-    чи отримано валідний токен.
+    Сканує директорію FINAL_RESULTS_DIR і її піддиректорії на наявність .txt файлів,
+    витягує пари ім’я та адреса з рядків, що починаються з 'Name:', 'Owner:' або 'Address:'.
+    Ім’я асоціюється з адресою, якщо обидва значення валідні.
 
     Параметри
     ----------
-    page : Page
-        Об’єкт сторінки Playwright для взаємодії.
-    timeout : int, optional
-        Максимальний час очікування iframe Turnstile (у мілісекундах), за замовчуванням 10000.
+    None
+        Функція не приймає аргументів.
 
     Повертає
     -------
-    bool
-        True, якщо валідний токен Turnstile отримано, False в іншому випадку.
+    list[tuple[str, str]]
+        Список кортежів, кожен з яких містить ім’я та адресу, витягнуті з файлів.
 
     Винятки
     ------
     Exception
-        Якщо виникає помилка під час взаємодії з iframe або чекбоксом.
+        Якщо виникає помилка при читанні файлу (наприклад, кодування або доступ).
+
+    Примітки
+    --------
+    - Ігнорує файли, які не є .txt або не можуть бути розпарсені.
+    - Логує попередження, якщо директорія final_results відсутня або файл не вдається обробити.
+    - Використовує кодування 'utf-8' для читання файлів.
+    - Перезавантаження адреси ('addr') скидається після додавання пари до черги.
     """
     tasks: list[Tuple[str, str]] = []
     if not os.path.isdir(FINAL_RESULTS_DIR):
@@ -610,7 +616,6 @@ async def valid_capha(page: Page):
     - Чекає до 45 секунд на завершення challenge.
     """
     # Перевіряємо чи є Turnstile (спочатку)
-    await page.reload()
     has_turnstile = await page.query_selector('input[name="cf-turnstile-response"]') is not None
     if has_turnstile:
         logger.info('⏳ Виявлено Cloudflare Turnstile, обробляємо...')
@@ -663,35 +668,14 @@ async def run_single(page: Page, name: str, address: str, idx: int) -> bool:
         try:
             logger.info(f'🔄 Спроба {attempt + 1}/{max_retries} завантаження сторінки...')
             await page.goto('https://www.fastpeoplesearch.com/', wait_until='domcontentloaded', timeout=30000)
-            await page.wait_for_timeout(60000)
             logger.info('✅ Сторінка завантажена успішно!')
             break
         except Exception as e:
-            logger.warning(f'⚠️ Спроба {attempt + 1} не вдалася: {e}')
-            if attempt == max_retries - 1:
-                logger.error('❌ Не вдалося завантажити сторінку після всіх спроб')
-
-                # Спробуємо спростити завантаження
-                try:
-                    logger.info('🔄 Спробуємо завантажити без очікування load...')
-                    await page.goto('https://www.fastpeoplesearch.com/', wait_until='domcontentloaded', timeout=30000)
-                    logger.info('✅ Сторінка завантажена з domcontentloaded!')
-                    break
-                except Exception as e2:
-                    logger.error(f'❌ Критична помилка завантаження: {e2}')
-                    return False
-            else:
-                await page.wait_for_timeout(5000)  # Чекаємо перед повторною спробою
+            logger.warning(f'⚠️ Спроба не вдалася: {e}')
 
 
     # Додаткова затримка для завантаження
     await page.wait_for_timeout(60000)
-    
-    # Перевіряємо чи завантажилася сторінка
-    try:
-        await page.wait_for_load_state('networkidle', timeout=10000)
-    except Exception as e:
-        logger.warning(f'⚠️ NetworkIdle timeout: {e}')
 
     # Закриваємо cookie-banner, якщо є
     try:
@@ -727,22 +711,26 @@ async def run_single(page: Page, name: str, address: str, idx: int) -> bool:
             if search_input:
                 logger.info(f'✅ Знайдено поле пошуку: {selector}')
                 break
-
-        if not search_input:
-            logger.error('❌ Поле пошуку не знайдено після Turnstile')
-            await page.screenshot(path=f'error_no_search_{idx}.png')
-            return False
+            else:
+                logger.error('❌ Поле пошуку не знайдено після Turnstile')
+                await page.screenshot(path=f'error_no_search_{idx}.png')
+                return False
         
         # Заповнюємо єдине поле пошуку
         logger.info(f'📝 Заповнюємо пошук')
         await page.locator('#search-name-name').fill(f'{name}')
         await page.locator('#search-name-address').fill(f'{address}')
-        await page.keyboard.press('Enter')
-        
+        # await page.keyboard.press('Enter')
+        await page.locator('.search-form-button-submit').click()
+
     except Exception as e:
         logger.error(f'❌ Помилка при заповненні форми: {e}')
         await page.screenshot(path=f'error_form_fill_{idx}.png')
         return False
+
+    await page.wait_for_timeout(30000)
+
+    await page.get_by_text(f'{address}')
 
     #Valid capha after enter name and adress
     try:
@@ -751,16 +739,6 @@ async def run_single(page: Page, name: str, address: str, idx: int) -> bool:
     except Exception:
         logger.info('Capha is not found')
 
-    # # Чекаємо результати пошуку
-    # try:
-    #     await page.wait_for_load_state('networkidle', timeout=15000)
-    #     logger.info('📋 Очікування завершення пошуку...')
-    # except Exception:
-    #     logger.debug('NetworkIdle timeout після пошуку')
-    #
-    # await page.wait_for_timeout(3000)
-    # await page.screenshot(path=f'patchright_gl_{idx}.png')
-    # logger.info(f'Screenshot patchright_gl_{idx}.png saved')
     return True
 
 # ---------- main ----------

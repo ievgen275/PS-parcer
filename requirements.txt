@@ -1,0 +1,6 @@
+requests~=2.32.4
+dotenv~=0.9.9
+python-dotenv~=1.1.1
+gologin~=2025.7.5
+playwright~=1.53.0
+cloudscraper~=1.2.71
