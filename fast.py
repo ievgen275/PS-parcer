@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 # Токен можна перезаписати змінною середовища GLOGIN_TOKEN, інакше береться цей за замовчуванням
-DEFAULT_GLOGIN_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2ODc1NTQzMzczNDMwNWE5ZjhiOTBlYWIiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2ODc1NTRhZThmYjQ5NTM5NDcxZWZjYjUifQ.eeLsXDmKheHzZmuMFohAc6mEbfSGex4tc2pUkhfjGEM"
+DEFAULT_GLOGIN_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2ODgxMGVhMmU1ODMxNWI0MGQwYzJjZjkiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2ODgxMTQyMDQ2M2YzNzM1ZmFjN2YyOTMifQ.Ww5j7Z5m6w9bJsS_1zyTJSYWoCr4ZPwaCKofqX1UPlk"
 GLOGIN_TOKEN = os.getenv('GLOGIN_TOKEN', DEFAULT_GLOGIN_TOKEN)
 if not GLOGIN_TOKEN:
     logger.error('GLOGIN_TOKEN is empty'); exit(1)
@@ -29,40 +29,43 @@ GOLOGIN_TMP = os.path.join(BASE_DIR, 'gologin_tmp'); os.makedirs(GOLOGIN_TMP, ex
 FINAL_RESULTS_DIR = os.path.join(BASE_DIR, 'final_results')
 
 # ---------- Setup proxy ----------
-def load_first_proxy() -> str | None:
-    """Завантажує перший валідний проксі з файлу proxies.txt.
+def load_proxies() -> list[str]:
+    """Завантажує всі валідні проксі з файлу proxies.txt.
 
-    Читає файл proxies.txt і повертає перший валідний проксі у форматі
+    Читає файл proxies.txt і повертає список валідних проксі у форматі
     'http://username:password@host:port' або 'http://host:port'. Пропускає порожні
     рядки та коментарі, що починаються з '#'.
 
     Повертає
     -------
-    str | None
-        Перший валідний URL проксі або None, якщо валідний проксі не знайдено.
+    list[str]
+        Список валідних URL проксі. Повертає порожній список, якщо валідні проксі не знайдено.
 
     Примітки
     --------
     - Файл проксі очікується в директорії BASE_DIR.
     - Підтримує формати проксі з аутентифікацією та без неї.
     """
+    proxies = []
+    PROXY_FILE = os.path.join(os.getenv('BASE_DIR', ''), 'proxies.txt')
     if not os.path.exists(PROXY_FILE):
-        return None
+        return proxies
     with open(PROXY_FILE, encoding='utf-8') as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
             if '://' in line:
-                return line
+                proxies.append(line)
+                continue
             parts = line.split(':')
             if len(parts) == 4:
-                h, p, u, pwd = parts
-                return f'http://{u}:{pwd}@{h}:{p}'
-            if len(parts) == 2:
-                h, p = parts
-                return f'http://{h}:{p}'
-    return None
+                host, port, username, password = parts
+                proxies.append(f'http://{username}:{password}@{host}:{port}')
+            elif len(parts) == 2:
+                host, port = parts
+                proxies.append(f'http://{host}:{port}')
+    return proxies
 
 # --------- Queue builder from final_results ----------
 def build_queue() -> list[Tuple[str, str]]:
@@ -204,37 +207,52 @@ async def start_patchright_with_gologin(proxy_url: str | None) -> Tuple[any, Bro
 
     # Додаткові анти-детекційні скрипти для Patchright
     await ctx.add_init_script("""
-        // Відключаємо webdriver detection
-        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-        
-        // Підміняємо chrome runtime
-        window.chrome = window.chrome || {};
-        window.chrome.runtime = window.chrome.runtime || {};
-        
-        // Видаляємо automation ознаки
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
-        
-        // Підміняємо plugins
+        // Підміняємо WebGL
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {
+            if (parameter === 37445) return 'Intel Inc.';
+            if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+            return getParameter.apply(this, arguments);
+        };
+
+        // Підміняємо Canvas
+        const getContext = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function() {
+            const context = getContext.apply(this, arguments);
+            if (context && arguments[0] === '2d') {
+                const getImageData = context.getImageData;
+                context.getImageData = function() {
+                    const imageData = getImageData.apply(this, arguments);
+                    imageData.data[0] = imageData.data[0] + (Math.random() - 0.5) * 0.1; // Додаємо шум
+                    return imageData;
+                };
+            }
+            return context;
+        };
+
+        // Відключаємо WebRTC
+        Object.defineProperty(navigator, 'getUserMedia', { get: () => undefined });
+        Object.defineProperty(navigator, 'webkitGetUserMedia', { get: () => undefined });
+        Object.defineProperty(navigator, 'mozGetUserMedia', { get: () => undefined });
+
+        // Імітація реальних плагінів
         Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5]
+            get: () => [
+                { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' }
+            ]
         });
-        
-        // Підміняємо permissions
-        const originalQuery = window.navigator.permissions.query;
-        window.navigator.permissions.query = (parameters) => (
-            parameters.name === 'notifications' ?
-                Promise.resolve({ state: Notification.permission }) :
-                originalQuery(parameters)
-        );
+
+        // Підміняємо hardwareConcurrency і memory
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
+        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
     """)
 
     if ctx.pages:
         page = ctx.pages[0]
     else:
         page = await ctx.new_page()
-    
+
     # Додаткові налаштування сторінки для анти-детекції
     await page.set_extra_http_headers({
         'Accept-Language': 'en-US,en;q=0.9',
@@ -245,7 +263,7 @@ async def start_patchright_with_gologin(proxy_url: str | None) -> Tuple[any, Bro
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'none',
     })
-    
+
     return patchright, browser, page
 
 # ---------- Turnstile helpers ----------
@@ -317,20 +335,20 @@ async def brute_click_turnstile(page: Page, loops: int = 15) -> bool:
     """
 
     logger.info('🎯 Запускаємо координатний клік по Turnstile (Patchright)...')
-    
+
     for attempt in range(loops):
         await asyncio.sleep(1)
-        
+
         # Шукаємо всі Turnstile iframe'и
         turnstile_frames = []
         for frame in page.frames:
             if 'challenges.cloudflare.com' in frame.url and '/turnstile/' in frame.url:
                 turnstile_frames.append(frame)
-        
+
         if not turnstile_frames:
             logger.debug(f'Спроба {attempt + 1}: Turnstile iframe не знайдено')
             continue
-            
+
         for frame in turnstile_frames:
             try:
                 # Спочатку чекаємо чи завантажився чекбокс
@@ -339,16 +357,16 @@ async def brute_click_turnstile(page: Page, loops: int = 15) -> bool:
                 has_checkbox = await frame.evaluate("""
                     document.querySelector('input[type="checkbox"], label, span[role="checkbox"], .cb-c') !== null
                 """)
-                
+
                 if "Checking" in title or not has_checkbox:
                     logger.debug(f'iframe ще завантажується: title="{title}", has_checkbox={has_checkbox}')
                     continue
-                
+
                 elem = await frame.frame_element()
                 bb = await elem.bounding_box()
                 if not bb:
                     continue
-                
+
                 # Пробуємо різні позиції для кліку (оптимізовано для Turnstile)
                 positions = [
                     (bb['x'] + 15, bb['y'] + bb['height'] * 0.5),                # Крайня ліва позиція
@@ -358,7 +376,7 @@ async def brute_click_turnstile(page: Page, loops: int = 15) -> bool:
                     (bb['x'] + 25, bb['y'] + bb['height'] * 0.4),                # Трохи вище
                     (bb['x'] + 25, bb['y'] + bb['height'] * 0.6),                # Трохи нижче
                 ]
-                
+
                 for x, y in positions:
                     logger.debug(f'Спроба {attempt + 1}: клік в ({x:.1f}, {y:.1f})')
                     # Використовуємо більш природний клік з рандомними затримками
@@ -366,17 +384,17 @@ async def brute_click_turnstile(page: Page, loops: int = 15) -> bool:
                     await page.wait_for_timeout(100 + int(time.time() * 1000) % 200)  # рандомна затримка
                     await page.mouse.click(x=x, y=y)
                     await page.wait_for_timeout(2000)
-                    
+
                     # Перевіряємо токен після кожного кліку
                     token = await page.evaluate("document.querySelector('input[name=\"cf-turnstile-response\"]')?.value||''")
                     logger.debug(f'Токен після кліку: {token[:50] if token else "пустий"}...')
                     if token and len(token) > 30:
                         logger.info('🎉 Токен отримано координатним кліком!')
                         return True
-                        
+
             except Exception as e:
                 logger.debug(f'Спроба {attempt + 1} помилка: {e}')
-    
+
     logger.warning('❌ Координатний клік не спрацював')
     return False
 
@@ -412,12 +430,12 @@ async def wait_for_cf_challenge(page: Page, max_sec: int = 40) -> bool:
             cls = await page.evaluate("document.documentElement.className")
         except Exception:
             cls = ''
-        
+
         # Перевіряємо чи challenge ще активний
         if cls and 'page-manage-challenge' in cls:
             logger.debug(f'⏳ Challenge активний, чекаємо... ({int(time.time() - start)}s)')
-            
-            # Діагностика: що є на сторінці  
+
+            # Діагностика: що є на сторінці
             try:
                 elements_info = await page.evaluate("""
                     (() => {
@@ -431,19 +449,19 @@ async def wait_for_cf_challenge(page: Page, max_sec: int = 40) -> bool:
                     })()
                 """)
                 logger.debug(f'📋 Стан сторінки: {elements_info}')
-                
+
                 # Якщо токен вже з'явився - challenge пройдено
                 if elements_info.get('turnstileValue') and len(elements_info['turnstileValue']) > 30:
                     logger.info('🎉 Challenge автоматично пройдено!')
                     return True
-                
+
                 # Шукаємо активні Turnstile iframe'и
                 turnstile_found = False
                 for frame in page.frames:
                     if 'challenges.cloudflare.com' in frame.url and '/turnstile/' in frame.url:
                         logger.info(f'🔍 Знайшли Turnstile iframe: {frame.url}')
                         turnstile_found = True
-                        
+
                         try:
                             # Спочатку діагностуємо що є в iframe
                             iframe_content = await frame.evaluate("""
@@ -478,7 +496,7 @@ async def wait_for_cf_challenge(page: Page, max_sec: int = 40) -> bool:
                                 })()
                             """)
                             logger.info(f'🔍 Вміст iframe: {iframe_content}')
-                            
+
                             # Чекаємо поки iframe завантажиться повністю
                             try:
                                 # Чекаємо поки зникне "Checking your Browser…" і з'явиться чекбокс
@@ -488,20 +506,20 @@ async def wait_for_cf_challenge(page: Page, max_sec: int = 40) -> bool:
                                     has_checkbox = await frame.evaluate("""
                                         document.querySelector('input[type="checkbox"], label, span[role="checkbox"], .cb-c') !== null
                                     """)
-                                    
+
                                     logger.debug(f'Спроба {wait_attempt + 1}: title="{title}", has_checkbox={has_checkbox}')
-                                    
+
                                     if has_checkbox and "Checking" not in title:
                                         logger.info('✅ Turnstile чекбокс завантажено!')
                                         break
-                                    
+
                                     await page.wait_for_timeout(1000)
                                 else:
                                     logger.warning('⚠️ Turnstile чекбокс не з\'явився за 20 секунд')
-                                    
+
                             except Exception as e:
                                 logger.warning(f'⚠️ Помилка очікування чекбоксу: {e}')
-                            
+
                             # Спробуємо різні селектори для чекбоксу
                             selectors = [
                                 'input[type="checkbox"]',
@@ -511,12 +529,12 @@ async def wait_for_cf_challenge(page: Page, max_sec: int = 40) -> bool:
                                 '.cb-c',
                                 '[data-testid="checkbox"]',
                                 'span:contains("human")',
-                                'label:contains("human")', 
+                                'label:contains("human")',
                                 'div:contains("Verify")',
                                 '*[class*="checkbox"]',
                                 '*[class*="cb-"]'
                             ]
-                            
+
                             checkbox_clicked = False
                             for selector in selectors:
                                 try:
@@ -534,7 +552,7 @@ async def wait_for_cf_challenge(page: Page, max_sec: int = 40) -> bool:
                                         break
                                 except Exception as e:
                                     logger.debug(f'Селектор {selector} не спрацював: {e}')
-                            
+
                             # Якщо не знайшли чекбокс, пробуємо координатний клік
                             if not checkbox_clicked:
                                 logger.info('🎯 Пробуємо координатний клік в iframe...')
@@ -548,22 +566,22 @@ async def wait_for_cf_challenge(page: Page, max_sec: int = 40) -> bool:
                                             (box['x'] + box['width'] * 0.15, box['y'] + box['height'] * 0.5),
                                             (box['x'] + box['width'] * 0.3, box['y'] + box['height'] * 0.5),
                                         ]
-                                        
+
                                         for x, y in positions:
                                             logger.info(f'🎯 Клік в позицію ({x:.0f}, {y:.0f})')
                                             await page.mouse.move(x, y)
                                             await page.wait_for_timeout(50 + int(time.time() * 1000) % 100)
                                             await page.mouse.click(x, y)
                                             await page.wait_for_timeout(2000)
-                                            
+
                                             # Перевіряємо токен після кожного кліку
                                             token = await page.evaluate("document.querySelector('input[name=\"cf-turnstile-response\"]')?.value || ''")
                                             if token and len(token) > 30:
                                                 logger.info('🎉 Токен отримано координатним кліком!')
                                                 return True
-                                        
+
                                         checkbox_clicked = True
-                            
+
                             if checkbox_clicked:
                                 # Перевіряємо чи з'явився токен
                                 for _ in range(10):  # Чекаємо до 10 секунд
@@ -572,26 +590,26 @@ async def wait_for_cf_challenge(page: Page, max_sec: int = 40) -> bool:
                                         logger.info('🎉 Токен отримано після кліку!')
                                         return True
                                     await page.wait_for_timeout(1000)
-                        
+
                         except Exception as e:
                             logger.debug(f'Помилка роботи з Turnstile iframe: {e}')
-                
+
                 # Якщо не знайшли Turnstile, але є input - можливо challenge автоматичний
                 if not turnstile_found and elements_info.get('hasTurnstileInput'):
                     logger.info('🤔 Turnstile input знайдено, але iframe відсутній - можливо автоматичний challenge')
                     # Чекаємо ще трохи
                     await page.wait_for_timeout(3000)
-                
+
             except Exception as e:
                 logger.debug(f'Помилка діагностики: {e}')
-        
+
         else:
             # Challenge завершено
             logger.info('✅ Challenge завершено, сторінка змінилась')
             return True
-            
+
         await page.wait_for_timeout(1000)
-    
+
     logger.error(f'❌ Challenge не завершився за {max_sec} секунд')
     return False
 
@@ -661,7 +679,7 @@ async def run_single(page: Page, name: str, address: str, idx: int) -> bool:
     - Зберігає знімки екрана при помилках для дебагінгу.
     """
     logger.info(f'🌐 Переходимо на FastPeopleSearch...')
-    
+
     # Спробуємо з обробкою timeout
     max_retries = 3
     for attempt in range(max_retries):
@@ -715,7 +733,7 @@ async def run_single(page: Page, name: str, address: str, idx: int) -> bool:
                 logger.error('❌ Поле пошуку не знайдено після Turnstile')
                 await page.screenshot(path=f'error_no_search_{idx}.png')
                 return False
-        
+
         # Заповнюємо єдине поле пошуку
         logger.info(f'📝 Заповнюємо пошук')
         await page.locator('#search-name-name').fill(f'{name}')
@@ -743,11 +761,11 @@ async def run_single(page: Page, name: str, address: str, idx: int) -> bool:
 
 # ---------- main ----------
 async def main():
-    """Основна функція для обробки черги пошукових завдань.
+    """Основна функція для обробки черги пошукових завдань із ротацією проксі.
 
     Завантажує завдання з директорії final_results, ініціалізує браузер за допомогою
     start_patchright_with_gologin і обробляє до 5 завдань перед перезапуском
-    браузера для уникнення проблем із ресурсами.
+    браузера для уникнення проблем із ресурсами. Використовує нове проксі для кожної ітерації.
 
     Повертає
     -------
@@ -755,21 +773,28 @@ async def main():
 
     Примітки
     --------
-    - Використовує проксі, якщо доступний із proxies.txt.
+    - Використовує список проксі з файлу proxies.txt, змінюючи проксі на кожній ітерації.
+    - Якщо проксі закінчуються, ротація починається з початку списку.
     - Закриває браузер і екземпляр Playwright після обробки завдань.
     """
     tasks = build_queue()
-    proxy_url = load_first_proxy()
-    while True:
+    proxies = load_proxies()
+    proxy_index = 0
+
+    while tasks:
+        proxy_url = proxies[proxy_index % len(proxies)] if proxies else None
         patchright, browser, page = await start_patchright_with_gologin(proxy_url)
         try:
             for idx, (n, a) in enumerate(tasks, 1):
                 if idx % 5 == 0:
                     break
-                logger.info(f'▶️ {idx}/{len(tasks)} {n} | {a}')
+                logger.info(f'▶️ {idx}/{len(tasks)} {n} | {a} | Proxy: {proxy_url or "No proxy"}')
                 ok = await run_single(page, n, a, idx)
                 if not ok:
                     break
+                proxy_index += 1
+                proxy_index = proxy_index % len(proxies) if proxies else 0
+            tasks = tasks[idx-1:] if idx > 1 else tasks
         finally:
             await browser.close()
             await patchright.stop()
